@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:bibleitda_apple_speech/bibleitda_apple_speech.dart';
 import 'package:bibleitda_apple_speech/bibleitda_apple_speech_platform_interface.dart';
@@ -22,7 +24,8 @@ class MockBibleitdaAppleSpeechPlatform
   Future<String> start({
     required String localeIdentifier,
     required List<String> contextualPhrases,
-  }) async => 'started:speech_transcriber';
+  }) async =>
+      'started:speech_transcriber';
 
   @override
   Future<void> stop() async {}
@@ -46,5 +49,19 @@ void main() {
     final availability = await BibleitdaAppleSpeech.instance.availability();
     expect(availability.supported, isTrue);
     expect(availability.minimumVersion, '26.0');
+  });
+
+  test('iOS uses responsive verse dictation with cumulative range updates', () {
+    final swift = File(
+      'ios/Classes/BibleitdaAppleSpeechPlugin.swift',
+    ).readAsStringSync();
+
+    expect(swift, contains('.progressiveShortDictation'));
+    expect(swift, isNot(contains('.progressiveLongDictation')));
+    expect(swift, contains('bufferSize: 2048'));
+    expect(swift,
+        contains('resultsFinalizationTime: result.resultsFinalizationTime'));
+    expect(swift, contains('replaceTranscriptSegment('));
+    expect(swift, contains('.map(\\.text)'));
   });
 }

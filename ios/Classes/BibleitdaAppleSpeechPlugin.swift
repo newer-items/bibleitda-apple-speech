@@ -161,6 +161,12 @@ private final class AppleSpeechSession {
     case converterUnavailable
   }
 
+  private struct TranscriptSegment {
+    let range: CMTimeRange
+    let text: String
+    var isFinal: Bool
+  }
+
   private enum Engine {
     case speech(SpeechTranscriber)
     case dictation(DictationTranscriber)
@@ -191,6 +197,7 @@ private final class AppleSpeechSession {
   private var inputContinuation: AsyncStream<AnalyzerInput>.Continuation?
   private var resultTask: Task<Void, Never>?
   private var isActive = false
+  private var transcriptSegments: [TranscriptSegment] = []
   private var rememberedCategory: AVAudioSession.Category?
   private var rememberedMode: AVAudioSession.Mode?
   private var rememberedOptions: AVAudioSession.CategoryOptions?
@@ -204,13 +211,14 @@ private final class AppleSpeechSession {
 
     let requestedLocale = Locale(identifier: localeIdentifier)
     let selectedEngine: Engine
-    // Prefer the same transcription family used by Apple's system dictation.
-    // It is a better fit for users reading complete Bible sentences aloud.
+    // A verse is short-form live dictation. This preset includes volatile
+    // results and frequent finalization, so trailing syllables do not wait for
+    // the long-dictation context window before appearing.
     if let locale = await DictationTranscriber.supportedLocale(
       equivalentTo: requestedLocale
     ) {
       selectedEngine = .dictation(
-        DictationTranscriber(locale: locale, preset: .progressiveLongDictation)
+        DictationTranscriber(locale: locale, preset: .progressiveShortDictation)
       )
     } else if let locale = await SpeechTranscriber.supportedLocale(
       equivalentTo: requestedLocale
@@ -252,11 +260,16 @@ private final class AppleSpeechSession {
     let inputPair = AsyncStream<AnalyzerInput>.makeStream(
       bufferingPolicy: .bufferingNewest(24)
     )
+
+    transcriptSegments.removeAll(keepingCapacity: true)
     inputContinuation = inputPair.continuation
     analyzer = newAnalyzer
     startResultTask(for: selectedEngine)
     try await newAnalyzer.start(inputSequence: inputPair.stream)
-    try startAudioEngine(analyzerFormat: analyzerFormat, continuation: inputPair.continuation)
+    try startAudioEngine(
+      analyzerFormat: analyzerFormat,
+      continuation: inputPair.continuation
+    )
 
     isActive = true
     emit([
@@ -308,8 +321,9 @@ private final class AppleSpeechSession {
             guard !Task.isCancelled else { return }
             self?.publish(
               text: result.text,
-              alternatives: result.alternatives,
               isFinal: result.isFinal,
+              range: result.range,
+              resultsFinalizationTime: result.resultsFinalizationTime,
               engine: engine.name
             )
           }
@@ -326,8 +340,9 @@ private final class AppleSpeechSession {
             guard !Task.isCancelled else { return }
             self?.publish(
               text: result.text,
-              alternatives: result.alternatives,
               isFinal: result.isFinal,
+              range: result.range,
+              resultsFinalizationTime: result.resultsFinalizationTime,
               engine: engine.name
             )
           }
@@ -342,19 +357,60 @@ private final class AppleSpeechSession {
 
   private func publish(
     text: AttributedString,
-    alternatives: [AttributedString],
     isFinal: Bool,
+    range: CMTimeRange,
+    resultsFinalizationTime: CMTime,
     engine: String
   ) {
     let mainText = String(text.characters).trimmingCharacters(in: .whitespacesAndNewlines)
     guard !mainText.isEmpty else { return }
+    replaceTranscriptSegment(
+      range: range,
+      text: mainText,
+      isFinal: isFinal,
+      resultsFinalizationTime: resultsFinalizationTime
+    )
+    let cumulativeText = transcriptSegments
+      .map(\.text)
+      .joined(separator: " ")
+      .trimmingCharacters(in: .whitespacesAndNewlines)
+    let cumulativeIsFinal = transcriptSegments.allSatisfy(\.isFinal)
     emit([
       "type": "result",
-      "text": mainText,
-      "alternatives": alternatives.prefix(5).map { String($0.characters) },
-      "isFinal": isFinal,
+      "text": cumulativeText,
+      "alternatives": [],
+      "isFinal": cumulativeIsFinal,
       "engine": engine,
     ])
+  }
+
+  private func replaceTranscriptSegment(
+    range: CMTimeRange,
+    text: String,
+    isFinal: Bool,
+    resultsFinalizationTime: CMTime
+  ) {
+    transcriptSegments.removeAll { Self.rangesOverlap($0.range, range) }
+    transcriptSegments.append(
+      TranscriptSegment(range: range, text: text, isFinal: isFinal)
+    )
+    transcriptSegments.sort {
+      CMTimeCompare($0.range.start, $1.range.start) < 0
+    }
+    for index in transcriptSegments.indices {
+      let segmentEnd = CMTimeRangeGetEnd(transcriptSegments[index].range)
+      if CMTimeCompare(segmentEnd, resultsFinalizationTime) <= 0 {
+        transcriptSegments[index].isFinal = true
+      }
+    }
+  }
+
+  nonisolated private static func rangesOverlap(
+    _ left: CMTimeRange,
+    _ right: CMTimeRange
+  ) -> Bool {
+    CMTimeCompare(left.start, CMTimeRangeGetEnd(right)) < 0 &&
+      CMTimeCompare(right.start, CMTimeRangeGetEnd(left)) < 0
   }
 
   private func publishError(_ error: Error) {
@@ -374,11 +430,10 @@ private final class AppleSpeechSession {
     rememberedMode = session.mode
     rememberedOptions = session.categoryOptions
 
-    // Match Apple's speech-recognition capture recommendations. Measurement
-    // mode avoids voice-processing effects that can distort quiet Korean
-    // syllables, while omitting Bluetooth options keeps the built-in mic route.
     try session.setCategory(.record, mode: .measurement, options: [])
-    if let builtInMic = session.availableInputs?.first(where: { $0.portType == .builtInMic }) {
+    if let builtInMic = session.availableInputs?.first(where: {
+      $0.portType == .builtInMic
+    }) {
       try session.setPreferredInput(builtInMic)
     }
     try session.setActive(true, options: .notifyOthersOnDeactivation)
@@ -389,13 +444,16 @@ private final class AppleSpeechSession {
     guard inputFormat.channelCount > 0 else {
       throw SessionError.noAudioInput
     }
-    guard let converter = AVAudioConverter(from: inputFormat, to: analyzerFormat) else {
+    guard let converter = AVAudioConverter(
+      from: inputFormat,
+      to: analyzerFormat
+    ) else {
       throw SessionError.converterUnavailable
     }
 
     inputNode.installTap(
       onBus: 0,
-      bufferSize: 4096,
+      bufferSize: 2048,
       format: inputFormat
     ) { buffer, _ in
       guard let converted = Self.convert(
@@ -414,12 +472,7 @@ private final class AppleSpeechSession {
     let route = session.currentRoute.inputs.first
     emit([
       "type": "diagnostic",
-      "input": route?.portType.rawValue ?? "none",
-      "inputName": route?.portName ?? "none",
-      "sampleRate": session.sampleRate,
-      "channels": inputFormat.channelCount,
-      "mode": session.mode.rawValue,
-      "category": session.category.rawValue,
+      "message": "audio_engine:\(route?.portType.rawValue ?? "none"):\(route?.portName ?? "none"):\(session.sampleRate)",
     ])
   }
 
@@ -450,6 +503,7 @@ private final class AppleSpeechSession {
     resultTask = nil
     analyzer = nil
     engine = nil
+    transcriptSegments.removeAll(keepingCapacity: true)
   }
 
   nonisolated private static func convert(
