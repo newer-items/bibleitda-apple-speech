@@ -1,6 +1,6 @@
 name: bibleitda_apple_speech
 description: Bibleitda's iOS 26 SpeechAnalyzer bridge with a dictation fallback.
-version: 0.0.1
+version: 0.0.2
 homepage: https://github.com/Newercorp/bibleitda-apple-speech
 repository: https://github.com/Newercorp/bibleitda-apple-speech
 publish_to: none

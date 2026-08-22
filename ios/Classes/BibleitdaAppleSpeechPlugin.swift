@@ -204,15 +204,19 @@ private final class AppleSpeechSession {
 
     let requestedLocale = Locale(identifier: localeIdentifier)
     let selectedEngine: Engine
-    if let locale = await SpeechTranscriber.supportedLocale(equivalentTo: requestedLocale) {
-      selectedEngine = .speech(
-        SpeechTranscriber(locale: locale, preset: .progressiveTranscription)
-      )
-    } else if let locale = await DictationTranscriber.supportedLocale(
+    // Prefer the same transcription family used by Apple's system dictation.
+    // It is a better fit for users reading complete Bible sentences aloud.
+    if let locale = await DictationTranscriber.supportedLocale(
       equivalentTo: requestedLocale
     ) {
       selectedEngine = .dictation(
         DictationTranscriber(locale: locale, preset: .progressiveLongDictation)
+      )
+    } else if let locale = await SpeechTranscriber.supportedLocale(
+      equivalentTo: requestedLocale
+    ) {
+      selectedEngine = .speech(
+        SpeechTranscriber(locale: locale, preset: .progressiveTranscription)
       )
     } else {
       throw SessionError.unsupportedLocale
@@ -370,9 +374,10 @@ private final class AppleSpeechSession {
     rememberedMode = session.mode
     rememberedOptions = session.categoryOptions
 
-    // Apple's SpeechAnalyzer sample uses spokenAudio. Omitting Bluetooth
-    // options and selecting builtInMic avoids accidental headset routing.
-    try session.setCategory(.playAndRecord, mode: .spokenAudio, options: [])
+    // Match Apple's speech-recognition capture recommendations. Measurement
+    // mode avoids voice-processing effects that can distort quiet Korean
+    // syllables, while omitting Bluetooth options keeps the built-in mic route.
+    try session.setCategory(.record, mode: .measurement, options: [])
     if let builtInMic = session.availableInputs?.first(where: { $0.portType == .builtInMic }) {
       try session.setPreferredInput(builtInMic)
     }
