@@ -21,9 +21,12 @@ final class WhisperSpeechSession: @unchecked Sendable {
   private static let maximumInferenceSamples = 480_000
   private static let inferenceInterval: TimeInterval = 1.0
   private static let minimumRMS: Float = 0.0015
-  private static let speechFrameRMS: Float = 0.003
+  // AVAudioSession.measurement delivers a lower raw level than Android's
+  // VOICE_RECOGNITION source. Startup text anchoring filters hallucinations,
+  // so iOS can keep a permissive audio gate without losing that protection.
+  private static let speechFrameRMS: Float = 0.0015
   private static let speechFrameSamples = 1_600
-  private static let minimumSpeechFrames = 2
+  private static let minimumSpeechFrames = 1
 
   private let engine: WhisperEngine
   private let emit: ([String: Any]) -> Void

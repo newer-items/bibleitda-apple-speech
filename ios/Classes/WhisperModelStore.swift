@@ -84,6 +84,30 @@ enum WhisperModelStore {
     return modelURL
   }
 
+  static func cachedLightModelURL() -> URL? {
+    let fileManager = FileManager.default
+    guard let applicationSupport = try? fileManager.url(
+      for: .applicationSupportDirectory,
+      in: .userDomainMask,
+      appropriateFor: nil,
+      create: true
+    ) else {
+      return nil
+    }
+    let directory = applicationSupport
+      .appendingPathComponent("BibleitdaSpeech", isDirectory: true)
+      .appendingPathComponent("Models", isDirectory: true)
+    let modelURL = directory.appendingPathComponent(modelName)
+    let markerURL = directory.appendingPathComponent("\(modelName).sha256")
+    guard (try? validateExistingModel(
+      at: modelURL,
+      markerURL: markerURL
+    )) == true else {
+      return nil
+    }
+    return modelURL
+  }
+
   private static func removeLegacyModels(
     in directory: URL,
     diagnostic: @escaping (String) -> Void

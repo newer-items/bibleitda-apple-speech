@@ -74,11 +74,13 @@ void main() {
     expect(plugin, contains('started:whisper_cpp_tiny'));
     expect(plugin, contains('"type": "download"'));
     expect(plugin, contains('removeLegacyModelsAtStartup()'));
+    expect(plugin, contains('preloadCachedEngine()'));
     expect(plugin, isNot(contains('SFSpeechRecognizer')));
     expect(session, contains('sampleRate = 16_000.0'));
     expect(session, contains('minimumInferenceSamples = 16_000'));
     expect(session, contains('inferenceInterval: TimeInterval = 1.0'));
-    expect(session, contains('minimumSpeechFrames = 2'));
+    expect(session, contains('speechFrameRMS: Float = 0.0015'));
+    expect(session, contains('minimumSpeechFrames = 1'));
     expect(session, contains('bufferSize: 2_048'));
     expect(session, contains('isFinal": true'));
     expect(session, contains('containsSpeech(finalSamples)'));
@@ -91,6 +93,7 @@ void main() {
     expect(modelStore, contains('77_691_713'));
     expect(modelStore, contains('legacyModelNames = ["ggml-base.bin"]'));
     expect(modelStore, contains('URLSessionDownloadDelegate'));
+    expect(modelStore, contains('cachedLightModelURL()'));
     expect(modelStore, contains('lastReportedPercent'));
     expect(
       modelStore,

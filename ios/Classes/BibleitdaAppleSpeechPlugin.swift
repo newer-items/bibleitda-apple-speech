@@ -21,6 +21,7 @@ public final class BibleitdaAppleSpeechPlugin: NSObject, FlutterPlugin, FlutterS
     )
     registrar.addMethodCallDelegate(instance, channel: methodChannel)
     eventChannel.setStreamHandler(instance)
+    instance.preloadCachedEngine()
   }
 
   public func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
@@ -114,6 +115,7 @@ public final class BibleitdaAppleSpeechPlugin: NSObject, FlutterPlugin, FlutterS
     }
 
     emit(["type": "status", "status": "preparing_model", "engine": "whisper_cpp_tiny"])
+    let startedAt = Date()
     let task = Task<WhisperEngine, Error> { [weak self] in
       let modelURL = try await WhisperModelStore.lightModelURL(
         diagnostic: { message in
@@ -142,13 +144,51 @@ public final class BibleitdaAppleSpeechPlugin: NSObject, FlutterPlugin, FlutterS
       engineLoadTask = nil
       emit([
         "type": "diagnostic",
-        "message": "whisper_model_ready:tiny:77691713",
+        "message": "whisper_model_ready:tiny:77691713:elapsed_ms=\(Self.elapsedMilliseconds(since: startedAt))",
       ])
       return engine
     } catch {
       engineLoadTask = nil
       throw error
     }
+  }
+
+  private func preloadCachedEngine() {
+    guard whisperEngine == nil,
+          engineLoadTask == nil,
+          let modelURL = WhisperModelStore.cachedLightModelURL() else {
+      return
+    }
+
+    let startedAt = Date()
+    let task = Task<WhisperEngine, Error> {
+      try await WhisperEngine.load(modelURL: modelURL)
+    }
+    engineLoadTask = task
+    Task { @MainActor [weak self] in
+      guard let self else { return }
+      do {
+        let engine = try await task.value
+        if self.whisperEngine == nil {
+          self.whisperEngine = engine
+        }
+        self.engineLoadTask = nil
+        self.emit([
+          "type": "diagnostic",
+          "message": "whisper_model_preloaded:tiny:elapsed_ms=\(Self.elapsedMilliseconds(since: startedAt))",
+        ])
+      } catch {
+        self.engineLoadTask = nil
+        self.emit([
+          "type": "diagnostic",
+          "message": "whisper_model_preload_failed:\(error.localizedDescription)",
+        ])
+      }
+    }
+  }
+
+  private static func elapsedMilliseconds(since startedAt: Date) -> Int {
+    Int(Date().timeIntervalSince(startedAt) * 1_000)
   }
 
   private func emit(_ event: [String: Any]) {
