@@ -55,7 +55,7 @@ public final class BibleitdaAppleSpeechPlugin: NSObject, FlutterPlugin, FlutterS
           }
           self.activeSession = session
           try session.start(localeIdentifier: localeIdentifier)
-          result("started:whisper_cpp_base")
+          result("started:whisper_cpp_tiny")
         } catch {
           self.activeSession = nil
           self.emit([
@@ -112,11 +112,26 @@ public final class BibleitdaAppleSpeechPlugin: NSObject, FlutterPlugin, FlutterS
       return try await engineLoadTask.value
     }
 
-    emit(["type": "status", "status": "preparing_model", "engine": "whisper_cpp_base"])
+    emit(["type": "status", "status": "preparing_model", "engine": "whisper_cpp_tiny"])
     let task = Task<WhisperEngine, Error> { [weak self] in
-      let modelURL = try await WhisperModelStore.baseModelURL { message in
-        self?.emit(["type": "diagnostic", "message": message])
-      }
+      let modelURL = try await WhisperModelStore.lightModelURL(
+        diagnostic: { message in
+          self?.emit(["type": "diagnostic", "message": message])
+        },
+        progress: { receivedBytes, totalBytes in
+          let fraction = totalBytes > 0
+            ? min(1, max(0, Double(receivedBytes) / Double(totalBytes)))
+            : 0
+          self?.emit([
+            "type": "download",
+            "status": "downloading",
+            "model": "tiny",
+            "progress": fraction,
+            "receivedBytes": receivedBytes,
+            "totalBytes": totalBytes,
+          ])
+        }
+      )
       return try await WhisperEngine.load(modelURL: modelURL)
     }
     engineLoadTask = task
@@ -126,7 +141,7 @@ public final class BibleitdaAppleSpeechPlugin: NSObject, FlutterPlugin, FlutterS
       engineLoadTask = nil
       emit([
         "type": "diagnostic",
-        "message": "whisper_model_ready:base:147951465",
+        "message": "whisper_model_ready:tiny:77691713",
       ])
       return engine
     } catch {

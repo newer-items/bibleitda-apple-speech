@@ -12,6 +12,10 @@ class AppleSpeechEvent {
     this.code = '',
     this.message = '',
     this.engine = '',
+    this.model = '',
+    this.progress,
+    this.receivedBytes = 0,
+    this.totalBytes = 0,
   });
 
   factory AppleSpeechEvent.fromMap(Map<Object?, Object?> value) {
@@ -27,6 +31,10 @@ class AppleSpeechEvent {
       code: value['code'] as String? ?? '',
       message: value['message'] as String? ?? '',
       engine: value['engine'] as String? ?? '',
+      model: value['model'] as String? ?? '',
+      progress: (value['progress'] as num?)?.toDouble(),
+      receivedBytes: (value['receivedBytes'] as num?)?.toInt() ?? 0,
+      totalBytes: (value['totalBytes'] as num?)?.toInt() ?? 0,
     );
   }
 
@@ -39,6 +47,10 @@ class AppleSpeechEvent {
   final String code;
   final String message;
   final String engine;
+  final String model;
+  final double? progress;
+  final int receivedBytes;
+  final int totalBytes;
 }
 
 class AppleSpeechAvailability {

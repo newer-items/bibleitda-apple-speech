@@ -25,7 +25,7 @@ class MockBibleitdaAppleSpeechPlatform
     required String localeIdentifier,
     required List<String> contextualPhrases,
   }) async =>
-      'started:whisper_cpp_base';
+      'started:whisper_cpp_tiny';
 
   @override
   Future<void> stop() async {}
@@ -51,7 +51,7 @@ void main() {
     expect(availability.minimumVersion, '14.0');
   });
 
-  test('iOS uses whisper.cpp base with stable model verification', () {
+  test('iOS uses whisper.cpp tiny with progress and stable verification', () {
     final plugin = File(
       'ios/Classes/BibleitdaAppleSpeechPlugin.swift',
     ).readAsStringSync();
@@ -71,7 +71,8 @@ void main() {
       'ios/Vendor/WhisperCppCore/ggml/Resources/ggml-metal.txt',
     );
 
-    expect(plugin, contains('started:whisper_cpp_base'));
+    expect(plugin, contains('started:whisper_cpp_tiny'));
+    expect(plugin, contains('"type": "download"'));
     expect(plugin, isNot(contains('SFSpeechRecognizer')));
     expect(session, contains('sampleRate = 16_000.0'));
     expect(session, contains('bufferSize: 2_048'));
@@ -82,13 +83,31 @@ void main() {
     expect(
         metalDevice, contains('pathForResource:@"ggml-metal" ofType:@"txt"'));
     expect(metalShader.lengthSync(), greaterThan(400000));
-    expect(modelStore, contains('ggml-base.bin'));
-    expect(modelStore, contains('147_951_465'));
+    expect(modelStore, contains('ggml-tiny.bin'));
+    expect(modelStore, contains('77_691_713'));
+    expect(modelStore, contains('legacyModelNames = ["ggml-base.bin"]'));
+    expect(modelStore, contains('URLSessionDownloadDelegate'));
     expect(
       modelStore,
       contains(
-        '60ed5bc3dd14eea856493d334349b405782ddcaf0028d4b5df4088345fba2efe',
+        'be07e048e1e599ad46341c8d2a135645097a538221678b7acdd1b1919c6e1b21',
       ),
     );
+  });
+
+  test('download events expose progress and byte counts', () {
+    final event = AppleSpeechEvent.fromMap({
+      'type': 'download',
+      'model': 'tiny',
+      'progress': 0.42,
+      'receivedBytes': 42,
+      'totalBytes': 100,
+    });
+
+    expect(event.type, 'download');
+    expect(event.model, 'tiny');
+    expect(event.progress, 0.42);
+    expect(event.receivedBytes, 42);
+    expect(event.totalBytes, 100);
   });
 }

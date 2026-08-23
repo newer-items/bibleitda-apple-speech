@@ -2,14 +2,18 @@ import CryptoKit
 import Foundation
 
 enum WhisperModelStore {
-  private static let modelName = "ggml-base.bin"
-  private static let expectedSize: Int64 = 147_951_465
-  private static let expectedSHA256 = "60ed5bc3dd14eea856493d334349b405782ddcaf0028d4b5df4088345fba2efe"
+  private static let modelName = "ggml-tiny.bin"
+  private static let expectedSize: Int64 = 77_691_713
+  private static let expectedSHA256 = "be07e048e1e599ad46341c8d2a135645097a538221678b7acdd1b1919c6e1b21"
   private static let remoteURL = URL(
-    string: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin"
+    string: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin"
   )!
+  private static let legacyModelNames = ["ggml-base.bin"]
 
-  static func baseModelURL(diagnostic: @escaping (String) -> Void) async throws -> URL {
+  static func lightModelURL(
+    diagnostic: @escaping (String) -> Void,
+    progress: @escaping (Int64, Int64) -> Void
+  ) async throws -> URL {
     let fileManager = FileManager.default
     let applicationSupport = try fileManager.url(
       for: .applicationSupportDirectory,
@@ -27,17 +31,23 @@ enum WhisperModelStore {
     var mutableDirectory = directory
     try? mutableDirectory.setResourceValues(resourceValues)
 
+    removeLegacyModels(in: directory, diagnostic: diagnostic)
+
     let modelURL = directory.appendingPathComponent(modelName)
     let markerURL = directory.appendingPathComponent("\(modelName).sha256")
     if try validateExistingModel(at: modelURL, markerURL: markerURL) {
-      diagnostic("whisper_model_cache_hit:base")
+      diagnostic("whisper_model_cache_hit:tiny")
       return modelURL
     }
 
     try? fileManager.removeItem(at: modelURL)
     try? fileManager.removeItem(at: markerURL)
-    diagnostic("whisper_model_download_started:base:147951465")
-    let temporaryURL = try await download(from: remoteURL)
+    diagnostic("whisper_model_download_started:tiny:\(expectedSize)")
+    progress(0, expectedSize)
+    let temporaryURL = try await ModelDownloader.download(
+      from: remoteURL,
+      progress: progress
+    )
     defer { try? fileManager.removeItem(at: temporaryURL) }
 
     let attributes = try fileManager.attributesOfItem(atPath: temporaryURL.path)
@@ -53,8 +63,27 @@ enum WhisperModelStore {
 
     try fileManager.moveItem(at: temporaryURL, to: modelURL)
     try expectedSHA256.write(to: markerURL, atomically: true, encoding: .utf8)
-    diagnostic("whisper_model_download_finished:base")
+    progress(expectedSize, expectedSize)
+    diagnostic("whisper_model_download_finished:tiny")
     return modelURL
+  }
+
+  private static func removeLegacyModels(
+    in directory: URL,
+    diagnostic: @escaping (String) -> Void
+  ) {
+    let fileManager = FileManager.default
+    for legacyName in legacyModelNames {
+      let modelURL = directory.appendingPathComponent(legacyName)
+      let markerURL = directory.appendingPathComponent("\(legacyName).sha256")
+      let existed = fileManager.fileExists(atPath: modelURL.path) ||
+        fileManager.fileExists(atPath: markerURL.path)
+      try? fileManager.removeItem(at: modelURL)
+      try? fileManager.removeItem(at: markerURL)
+      if existed {
+        diagnostic("whisper_legacy_model_removed:base")
+      }
+    }
   }
 
   private static func validateExistingModel(at modelURL: URL, markerURL: URL) throws -> Bool {
@@ -76,44 +105,6 @@ enum WhisperModelStore {
     }
     try expectedSHA256.write(to: markerURL, atomically: true, encoding: .utf8)
     return true
-  }
-
-  private static func download(from url: URL) async throws -> URL {
-    if #available(iOS 15.0, *) {
-      let (temporaryURL, response) = try await URLSession.shared.download(from: url)
-      try validate(response: response)
-      return temporaryURL
-    }
-    return try await withCheckedThrowingContinuation { continuation in
-      let task = URLSession.shared.downloadTask(with: url) { temporaryURL, response, error in
-        if let error {
-          continuation.resume(throwing: error)
-          return
-        }
-        do {
-          if let response {
-            try validate(response: response)
-          }
-          guard let temporaryURL else {
-            throw ModelError.missingDownload
-          }
-          let retainedURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent(UUID().uuidString)
-          try FileManager.default.moveItem(at: temporaryURL, to: retainedURL)
-          continuation.resume(returning: retainedURL)
-        } catch {
-          continuation.resume(throwing: error)
-        }
-      }
-      task.resume()
-    }
-  }
-
-  private static func validate(response: URLResponse) throws {
-    guard let httpResponse = response as? HTTPURLResponse,
-          (200...299).contains(httpResponse.statusCode) else {
-      throw ModelError.downloadFailed
-    }
   }
 
   private static func sha256(of url: URL) throws -> String {
@@ -139,14 +130,104 @@ enum WhisperModelStore {
     var errorDescription: String? {
       switch self {
       case .downloadFailed:
-        return "Whisper base model download failed."
+        return "Whisper light model download failed."
       case .missingDownload:
-        return "Whisper base model download did not create a file."
+        return "Whisper light model download did not create a file."
       case .invalidSize(let expected, let actual):
-        return "Whisper base model size is invalid (expected \(expected), received \(actual))."
+        return "Whisper light model size is invalid (expected \(expected), received \(actual))."
       case .invalidChecksum:
-        return "Whisper base model checksum verification failed."
+        return "Whisper light model checksum verification failed."
       }
+    }
+  }
+}
+
+private final class ModelDownloader: NSObject, URLSessionDownloadDelegate {
+  private let progress: (Int64, Int64) -> Void
+  private var continuation: CheckedContinuation<URL, Error>?
+  private var retainedURL: URL?
+  private var responseError: Error?
+  private var session: URLSession?
+
+  private init(progress: @escaping (Int64, Int64) -> Void) {
+    self.progress = progress
+  }
+
+  static func download(
+    from url: URL,
+    progress: @escaping (Int64, Int64) -> Void
+  ) async throws -> URL {
+    let downloader = ModelDownloader(progress: progress)
+    return try await downloader.start(url: url)
+  }
+
+  private func start(url: URL) async throws -> URL {
+    try await withCheckedThrowingContinuation { continuation in
+      self.continuation = continuation
+      let configuration = URLSessionConfiguration.default
+      configuration.waitsForConnectivity = true
+      configuration.timeoutIntervalForRequest = 60
+      configuration.timeoutIntervalForResource = 600
+      let session = URLSession(
+        configuration: configuration,
+        delegate: self,
+        delegateQueue: nil
+      )
+      self.session = session
+      session.downloadTask(with: url).resume()
+    }
+  }
+
+  func urlSession(
+    _ session: URLSession,
+    downloadTask: URLSessionDownloadTask,
+    didWriteData bytesWritten: Int64,
+    totalBytesWritten: Int64,
+    totalBytesExpectedToWrite: Int64
+  ) {
+    let total = totalBytesExpectedToWrite > 0
+      ? totalBytesExpectedToWrite
+      : downloadTask.response?.expectedContentLength ?? 0
+    progress(totalBytesWritten, total)
+  }
+
+  func urlSession(
+    _ session: URLSession,
+    downloadTask: URLSessionDownloadTask,
+    didFinishDownloadingTo location: URL
+  ) {
+    do {
+      guard let response = downloadTask.response as? HTTPURLResponse,
+            (200...299).contains(response.statusCode) else {
+        throw WhisperModelStore.ModelError.downloadFailed
+      }
+      let destination = FileManager.default.temporaryDirectory
+        .appendingPathComponent(UUID().uuidString)
+      try FileManager.default.moveItem(at: location, to: destination)
+      retainedURL = destination
+    } catch {
+      responseError = error
+    }
+  }
+
+  func urlSession(
+    _ session: URLSession,
+    task: URLSessionTask,
+    didCompleteWithError error: Error?
+  ) {
+    defer {
+      continuation = nil
+      self.session?.finishTasksAndInvalidate()
+      self.session = nil
+    }
+    if let error {
+      continuation?.resume(throwing: error)
+    } else if let responseError {
+      continuation?.resume(throwing: responseError)
+    } else if let retainedURL {
+      continuation?.resume(returning: retainedURL)
+    } else {
+      continuation?.resume(throwing: WhisperModelStore.ModelError.missingDownload)
     }
   }
 }
