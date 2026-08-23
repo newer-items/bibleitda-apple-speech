@@ -1,5 +1,5 @@
 group 'kr.co.newer.bibleitda_apple_speech'
-version '0.2.0'
+version '0.2.1'
 
 buildscript {
     ext.kotlin_version = '2.1.0'

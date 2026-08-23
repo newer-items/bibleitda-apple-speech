@@ -143,8 +143,18 @@ internal class WhisperSpeechSession(
         .trim()
 
     private fun hasRecentSpeech(value: FloatArray): Boolean {
-        val start = maxOf(0, value.size - 32_000)
-        return rms(value, start, value.size) >= MINIMUM_RMS
+        val recentStart = maxOf(0, value.size - SAMPLE_RATE)
+        var speechFrames = 0
+        var start = recentStart
+        while (start < value.size) {
+            val end = min(start + SPEECH_FRAME_SAMPLES, value.size)
+            if (rms(value, start, end) >= SPEECH_FRAME_RMS) {
+                speechFrames++
+                if (speechFrames >= MINIMUM_SPEECH_FRAMES) return true
+            }
+            start = end
+        }
+        return false
     }
 
     private fun containsSpeech(value: FloatArray): Boolean {
@@ -188,9 +198,12 @@ internal class WhisperSpeechSession(
 
     private companion object {
         const val SAMPLE_RATE = 16_000
-        const val MINIMUM_INFERENCE_SAMPLES = 24_000
+        const val MINIMUM_INFERENCE_SAMPLES = 16_000
         const val MAXIMUM_INFERENCE_SAMPLES = 480_000
-        const val INFERENCE_INTERVAL_MS = 1_500L
+        const val INFERENCE_INTERVAL_MS = 1_000L
         const val MINIMUM_RMS = 0.0015f
+        const val SPEECH_FRAME_RMS = 0.003f
+        const val SPEECH_FRAME_SAMPLES = 1_600
+        const val MINIMUM_SPEECH_FRAMES = 2
     }
 }

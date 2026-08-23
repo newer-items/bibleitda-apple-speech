@@ -17,10 +17,13 @@ final class WhisperSpeechSession: @unchecked Sendable {
   }
 
   private static let sampleRate = 16_000.0
-  private static let minimumInferenceSamples = 24_000
+  private static let minimumInferenceSamples = 16_000
   private static let maximumInferenceSamples = 480_000
-  private static let inferenceInterval: TimeInterval = 1.5
+  private static let inferenceInterval: TimeInterval = 1.0
   private static let minimumRMS: Float = 0.0015
+  private static let speechFrameRMS: Float = 0.003
+  private static let speechFrameSamples = 1_600
+  private static let minimumSpeechFrames = 2
 
   private let engine: WhisperEngine
   private let emit: ([String: Any]) -> Void
@@ -306,8 +309,20 @@ final class WhisperSpeechSession: @unchecked Sendable {
 
   private nonisolated static func hasRecentSpeech(_ samples: [Float]) -> Bool {
     guard !samples.isEmpty else { return false }
-    let recent = samples.suffix(min(samples.count, 32_000))
-    return rms(of: recent) >= minimumRMS
+    let recent = Array(samples.suffix(min(samples.count, 16_000)))
+    var speechFrames = 0
+    var start = 0
+    while start < recent.count {
+      let end = min(start + speechFrameSamples, recent.count)
+      if rms(of: recent[start..<end]) >= speechFrameRMS {
+        speechFrames += 1
+        if speechFrames >= minimumSpeechFrames {
+          return true
+        }
+      }
+      start = end
+    }
+    return false
   }
 
   private nonisolated static func containsSpeech(_ samples: [Float]) -> Bool {

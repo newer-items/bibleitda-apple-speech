@@ -76,6 +76,9 @@ void main() {
     expect(plugin, contains('removeLegacyModelsAtStartup()'));
     expect(plugin, isNot(contains('SFSpeechRecognizer')));
     expect(session, contains('sampleRate = 16_000.0'));
+    expect(session, contains('minimumInferenceSamples = 16_000'));
+    expect(session, contains('inferenceInterval: TimeInterval = 1.0'));
+    expect(session, contains('minimumSpeechFrames = 2'));
     expect(session, contains('bufferSize: 2_048'));
     expect(session, contains('isFinal": true'));
     expect(session, contains('containsSpeech(finalSamples)'));
@@ -135,6 +138,9 @@ void main() {
     expect(plugin, contains('requestPermissions'));
     expect(session, contains('MediaRecorder.AudioSource.VOICE_RECOGNITION'));
     expect(session, contains('SAMPLE_RATE = 16_000'));
+    expect(session, contains('MINIMUM_INFERENCE_SAMPLES = 16_000'));
+    expect(session, contains('INFERENCE_INTERVAL_MS = 1_000L'));
+    expect(session, contains('MINIMUM_SPEECH_FRAMES = 2'));
     expect(session, contains('MAXIMUM_INFERENCE_SAMPLES = 480_000'));
     expect(modelStore, contains('ggml-tiny.bin'));
     expect(modelStore, contains('EXPECTED_SIZE = 77_691_713L'));

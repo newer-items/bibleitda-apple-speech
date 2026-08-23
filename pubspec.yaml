@@ -1,6 +1,6 @@
 name: bibleitda_apple_speech
 description: Bibleitda's iOS and Android microphone bridge backed by whisper.cpp.
-version: 0.2.0
+version: 0.2.1
 homepage: https://github.com/Newercorp/bibleitda-apple-speech
 repository: https://github.com/Newercorp/bibleitda-apple-speech
 publish_to: none
