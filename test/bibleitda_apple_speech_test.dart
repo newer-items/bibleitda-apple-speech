@@ -61,12 +61,27 @@ void main() {
     final modelStore = File(
       'ios/Classes/WhisperModelStore.swift',
     ).readAsStringSync();
+    final podspec = File(
+      'ios/bibleitda_apple_speech.podspec',
+    ).readAsStringSync();
+    final metalDevice = File(
+      'ios/Vendor/WhisperCppCore/ggml/src/ggml-metal/ggml-metal-device.m',
+    ).readAsStringSync();
+    final metalShader = File(
+      'ios/Vendor/WhisperCppCore/ggml/Resources/ggml-metal.txt',
+    );
 
     expect(plugin, contains('started:whisper_cpp_base'));
     expect(plugin, isNot(contains('SFSpeechRecognizer')));
     expect(session, contains('sampleRate = 16_000.0'));
     expect(session, contains('bufferSize: 2_048'));
     expect(session, contains('isFinal": true'));
+    expect(session, contains('containsSpeech(finalSamples)'));
+    expect(session, contains('whisper_inference:'));
+    expect(podspec, contains('ggml/Resources/ggml-metal.txt'));
+    expect(
+        metalDevice, contains('pathForResource:@"ggml-metal" ofType:@"txt"'));
+    expect(metalShader.lengthSync(), greaterThan(400000));
     expect(modelStore, contains('ggml-base.bin'));
     expect(modelStore, contains('147_951_465'));
     expect(

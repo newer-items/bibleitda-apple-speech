@@ -1,5 +1,10 @@
 import Foundation
 
+struct WhisperTranscription: Sendable {
+  let text: String
+  let processingMilliseconds: Int
+}
+
 @_silgen_name("wf_context_create")
 private func wf_context_create(
   _ modelPath: UnsafePointer<CChar>?,
@@ -82,9 +87,9 @@ final class WhisperEngine: @unchecked Sendable {
     }
   }
 
-  func transcribe(samples: [Float], language: String) async throws -> String {
+  func transcribe(samples: [Float], language: String) async throws -> WhisperTranscription {
     guard !samples.isEmpty else {
-      return ""
+      return WhisperTranscription(text: "", processingMilliseconds: 0)
     }
     return try await withCheckedThrowingContinuation { continuation in
       queue.async { [self] in
@@ -106,7 +111,7 @@ final class WhisperEngine: @unchecked Sendable {
         Self.set(job, int: "greedy_best_of", value: 1)
         Self.set(job, double: "temperature", value: 0)
         Self.set(job, double: "temperature_inc", value: 0)
-        Self.set(job, double: "no_speech_thold", value: 0.55)
+        Self.set(job, double: "no_speech_thold", value: 0.30)
         Self.set(job, string: "language", value: language)
 
         let jsonPointer = samples.withUnsafeBufferPointer { buffer in
@@ -125,7 +130,13 @@ final class WhisperEngine: @unchecked Sendable {
           let value = try JSONSerialization.jsonObject(with: data) as? [String: Any]
           let text = (value?["text"] as? String ?? "")
             .trimmingCharacters(in: .whitespacesAndNewlines)
-          continuation.resume(returning: text)
+          let processingMicroseconds = value?["processing_us"] as? Int ?? 0
+          continuation.resume(
+            returning: WhisperTranscription(
+              text: text,
+              processingMilliseconds: processingMicroseconds / 1_000
+            )
+          )
         } catch {
           continuation.resume(throwing: error)
         }

@@ -17,9 +17,9 @@ final class WhisperSpeechSession: @unchecked Sendable {
   }
 
   private static let sampleRate = 16_000.0
-  private static let minimumInferenceSamples = 16_000
+  private static let minimumInferenceSamples = 24_000
   private static let maximumInferenceSamples = 480_000
-  private static let inferenceInterval: TimeInterval = 0.9
+  private static let inferenceInterval: TimeInterval = 1.5
   private static let minimumRMS: Float = 0.0015
 
   private let engine: WhisperEngine
@@ -77,14 +77,22 @@ final class WhisperSpeechSession: @unchecked Sendable {
     }
     let finalGeneration = finalState.0
     let finalSamples = finalState.1
-    if Self.hasSpeech(finalSamples) {
+    if Self.containsSpeech(finalSamples) {
       do {
-        let text = try await engine.transcribe(
+        let transcription = try await engine.transcribe(
           samples: Array(finalSamples.suffix(Self.maximumInferenceSamples)),
           language: finalState.2
         )
         guard finalGeneration == stateQueue.sync(execute: { generation }) else { return }
-        let cleaned = Self.clean(text)
+        emit([
+          "type": "diagnostic",
+          "message": Self.inferenceDiagnostic(
+            kind: "final",
+            sampleCount: min(finalSamples.count, Self.maximumInferenceSamples),
+            processingMilliseconds: transcription.processingMilliseconds
+          ),
+        ])
+        let cleaned = Self.clean(transcription.text)
         if !cleaned.isEmpty {
           stateQueue.sync { lastTranscript = cleaned }
           emit([
@@ -188,7 +196,7 @@ final class WhisperSpeechSession: @unchecked Sendable {
   private nonisolated func startInferenceLocked() {
     guard active, !inferenceInFlight else { return }
     let snapshot = Array(samples.suffix(Self.maximumInferenceSamples))
-    guard Self.hasSpeech(snapshot) else { return }
+    guard Self.hasRecentSpeech(snapshot) else { return }
     let inferenceGeneration = generation
     let inferenceLanguage = language
     inferenceInFlight = true
@@ -198,18 +206,33 @@ final class WhisperSpeechSession: @unchecked Sendable {
     Task { [weak self] in
       guard let self else { return }
       do {
-        let text = try await self.engine.transcribe(
+        let transcription = try await self.engine.transcribe(
           samples: snapshot,
           language: inferenceLanguage
         )
-        self.finishInference(text: text, generation: inferenceGeneration, error: nil)
+        self.finishInference(
+          transcription: transcription,
+          sampleCount: snapshot.count,
+          generation: inferenceGeneration,
+          error: nil
+        )
       } catch {
-        self.finishInference(text: "", generation: inferenceGeneration, error: error)
+        self.finishInference(
+          transcription: nil,
+          sampleCount: snapshot.count,
+          generation: inferenceGeneration,
+          error: error
+        )
       }
     }
   }
 
-  private nonisolated func finishInference(text: String, generation: Int, error: Error?) {
+  private nonisolated func finishInference(
+    transcription: WhisperTranscription?,
+    sampleCount: Int,
+    generation: Int,
+    error: Error?
+  ) {
     stateQueue.async { [weak self] in
       guard let self else { return }
       self.inferenceInFlight = false
@@ -221,8 +244,16 @@ final class WhisperSpeechSession: @unchecked Sendable {
           "code": "recognition_error",
           "message": error.localizedDescription,
         ])
-      } else {
-        let cleaned = Self.clean(text)
+      } else if let transcription {
+        self.emit([
+          "type": "diagnostic",
+          "message": Self.inferenceDiagnostic(
+            kind: "partial",
+            sampleCount: sampleCount,
+            processingMilliseconds: transcription.processingMilliseconds
+          ),
+        ])
+        let cleaned = Self.clean(transcription.text)
         if !cleaned.isEmpty, cleaned != self.lastTranscript {
           self.lastTranscript = cleaned
           self.emit([
@@ -236,7 +267,15 @@ final class WhisperSpeechSession: @unchecked Sendable {
       }
 
       if self.active, self.inferencePending {
-        self.startInferenceLocked()
+        let remaining = max(
+          0,
+          Self.inferenceInterval - Date().timeIntervalSince(self.lastInferenceAt)
+        )
+        self.stateQueue.asyncAfter(deadline: .now() + remaining) { [weak self] in
+          guard let self, self.active, self.inferencePending,
+                !self.inferenceInFlight else { return }
+          self.startInferenceLocked()
+        }
       }
     }
   }
@@ -265,11 +304,40 @@ final class WhisperSpeechSession: @unchecked Sendable {
     }
   }
 
-  private nonisolated static func hasSpeech(_ samples: [Float]) -> Bool {
+  private nonisolated static func hasRecentSpeech(_ samples: [Float]) -> Bool {
     guard !samples.isEmpty else { return false }
     let recent = samples.suffix(min(samples.count, 32_000))
-    let energy = recent.reduce(Float.zero) { $0 + ($1 * $1) }
-    return sqrt(energy / Float(recent.count)) >= minimumRMS
+    return rms(of: recent) >= minimumRMS
+  }
+
+  private nonisolated static func containsSpeech(_ samples: [Float]) -> Bool {
+    guard !samples.isEmpty else { return false }
+    let frameSize = 16_000
+    var start = 0
+    while start < samples.count {
+      let end = min(start + frameSize, samples.count)
+      if rms(of: samples[start..<end]) >= minimumRMS {
+        return true
+      }
+      start = end
+    }
+    return false
+  }
+
+  private nonisolated static func rms<C: Collection>(of samples: C) -> Float
+  where C.Element == Float {
+    guard !samples.isEmpty else { return 0 }
+    let energy = samples.reduce(Float.zero) { $0 + ($1 * $1) }
+    return sqrt(energy / Float(samples.count))
+  }
+
+  private nonisolated static func inferenceDiagnostic(
+    kind: String,
+    sampleCount: Int,
+    processingMilliseconds: Int
+  ) -> String {
+    let audioMilliseconds = Int(Double(sampleCount) / sampleRate * 1_000)
+    return "whisper_inference:\(kind):audio_ms=\(audioMilliseconds):processing_ms=\(processingMilliseconds)"
   }
 
   private nonisolated static func clean(_ text: String) -> String {

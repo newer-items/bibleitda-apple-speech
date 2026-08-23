@@ -4,7 +4,7 @@
 #
 Pod::Spec.new do |s|
   s.name             = 'bibleitda_apple_speech'
-  s.version          = '0.1.0'
+  s.version          = '0.1.1'
   s.summary          = 'Bibleitda iOS whisper.cpp speech transcription bridge.'
   s.description      = <<-DESC
 Uses whisper.cpp for private, on-device Bible-writing speech recognition.

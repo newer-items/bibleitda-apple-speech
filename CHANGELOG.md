@@ -1,3 +1,9 @@
+## 0.1.1
+
+* Bundle the Metal shader used by whisper.cpp on iOS.
+* Keep final recognition after a pause and expose inference timing diagnostics.
+* Throttle partial inference to avoid saturating older iPhones.
+
 ## 0.1.0
 
 - Replace Apple SpeechAnalyzer recognition with multilingual whisper.cpp `base` on iOS.

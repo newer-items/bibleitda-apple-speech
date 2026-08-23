@@ -192,6 +192,11 @@ ggml_metal_library_t ggml_metal_library_init(ggml_metal_device_t dev) {
                 path_source = [path_resource stringByAppendingPathComponent:@"ggml-metal.metal"];
             } else {
                 path_source = [bundle pathForResource:@"ggml-metal" ofType:@"metal"];
+                if (path_source == nil) {
+                    // CocoaPods copies the shader as text so builds do not depend on
+                    // a separately installed Xcode Metal Toolchain.
+                    path_source = [bundle pathForResource:@"ggml-metal" ofType:@"txt"];
+                }
             }
 
             if (path_source == nil) {
