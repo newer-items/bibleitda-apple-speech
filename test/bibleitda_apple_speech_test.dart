@@ -51,16 +51,27 @@ void main() {
     expect(availability.minimumVersion, '26.0');
   });
 
-  test('iOS uses responsive verse dictation with cumulative range updates', () {
+  test('iOS uses low-latency speech with a lossless live audio stream', () {
     final swift = File(
       'ios/Classes/BibleitdaAppleSpeechPlugin.swift',
     ).readAsStringSync();
 
+    expect(swift, contains('.progressiveTranscription'));
     expect(swift, contains('.progressiveShortDictation'));
     expect(swift, isNot(contains('.progressiveLongDictation')));
+    expect(
+      swift.indexOf('SpeechTranscriber.supportedLocale'),
+      lessThan(swift.indexOf('DictationTranscriber.supportedLocale')),
+    );
+    expect(swift, contains('AsyncStream<AnalyzerInput>.makeStream()'));
+    expect(swift, isNot(contains('.bufferingNewest(24)')));
+    expect(swift, contains('resultStreamDidEnd(engine: engine.name)'));
+    expect(swift, contains('"reason": "result_stream_ended"'));
     expect(swift, contains('bufferSize: 2048'));
-    expect(swift,
-        contains('resultsFinalizationTime: result.resultsFinalizationTime'));
+    expect(
+      swift,
+      contains('resultsFinalizationTime: result.resultsFinalizationTime'),
+    );
     expect(swift, contains('replaceTranscriptSegment('));
     expect(swift, contains('.map(\\.text)'));
   });

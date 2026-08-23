@@ -211,20 +211,19 @@ private final class AppleSpeechSession {
 
     let requestedLocale = Locale(identifier: localeIdentifier)
     let selectedEngine: Engine
-    // A verse is short-form live dictation. This preset includes volatile
-    // results and frequent finalization, so trailing syllables do not wait for
-    // the long-dictation context window before appearing.
-    if let locale = await DictationTranscriber.supportedLocale(
-      equivalentTo: requestedLocale
-    ) {
-      selectedEngine = .dictation(
-        DictationTranscriber(locale: locale, preset: .progressiveShortDictation)
-      )
-    } else if let locale = await SpeechTranscriber.supportedLocale(
+    // SpeechTranscriber is Apple's low-latency live model. DictationTranscriber
+    // remains the compatibility fallback for unsupported locales or devices.
+    if let locale = await SpeechTranscriber.supportedLocale(
       equivalentTo: requestedLocale
     ) {
       selectedEngine = .speech(
         SpeechTranscriber(locale: locale, preset: .progressiveTranscription)
+      )
+    } else if let locale = await DictationTranscriber.supportedLocale(
+      equivalentTo: requestedLocale
+    ) {
+      selectedEngine = .dictation(
+        DictationTranscriber(locale: locale, preset: .progressiveShortDictation)
       )
     } else {
       throw SessionError.unsupportedLocale
@@ -257,9 +256,9 @@ private final class AppleSpeechSession {
     }
     try await newAnalyzer.prepareToAnalyze(in: analyzerFormat)
 
-    let inputPair = AsyncStream<AnalyzerInput>.makeStream(
-      bufferingPolicy: .bufferingNewest(24)
-    )
+    // Keep every microphone buffer. The previous one-second newest-only queue
+    // could drop the beginning of a phrase while the on-device model caught up.
+    let inputPair = AsyncStream<AnalyzerInput>.makeStream()
 
     transcriptSegments.removeAll(keepingCapacity: true)
     inputContinuation = inputPair.continuation
@@ -327,6 +326,8 @@ private final class AppleSpeechSession {
               engine: engine.name
             )
           }
+          guard !Task.isCancelled else { return }
+          self?.resultStreamDidEnd(engine: engine.name)
         } catch is CancellationError {
           return
         } catch {
@@ -346,6 +347,8 @@ private final class AppleSpeechSession {
               engine: engine.name
             )
           }
+          guard !Task.isCancelled else { return }
+          self?.resultStreamDidEnd(engine: engine.name)
         } catch is CancellationError {
           return
         } catch {
@@ -418,6 +421,17 @@ private final class AppleSpeechSession {
       "type": "error",
       "code": "recognition_error",
       "message": error.localizedDescription,
+    ])
+  }
+
+  private func resultStreamDidEnd(engine: String) {
+    guard isActive else { return }
+    isActive = false
+    emit([
+      "type": "status",
+      "status": "done",
+      "engine": engine,
+      "reason": "result_stream_ended",
     ])
   }
 

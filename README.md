@@ -16,7 +16,7 @@ Android is intentionally not implemented. Bibleitda continues to use its existin
 bibleitda_apple_speech:
   git:
     url: https://github.com/Newercorp/bibleitda-apple-speech.git
-    ref: v0.0.1
+    ref: v0.0.4
 ```
 
 The host app must include `NSMicrophoneUsageDescription` and `NSSpeechRecognitionUsageDescription` in `Info.plist`. The plugin requires iOS 14 to build and uses the new engine only on iOS 26 or later.
