@@ -1,14 +1,19 @@
-# Bibleitda Apple Speech
+# Bibleitda Speech
 
-iOS-only Flutter plugin used by Bibleitda's Bible-writing STT flow.
+Flutter plugin used by Bibleitda's Bible-writing STT flow on iOS and Android.
 
-- Captures 16 kHz mono microphone audio and transcribes it with whisper.cpp `base`.
-- Downloads the official multilingual model once, verifies its SHA-256, and caches it outside iCloud backup.
-- Runs inference fully on the iPhone after the model download; microphone audio is not uploaded.
-- Keeps the existing Flutter event contract so Bibleitda's STT matching logic remains unchanged.
-- Uses Metal and Accelerate on supported Apple hardware.
+- Captures 16 kHz mono microphone audio and transcribes it locally with
+  whisper.cpp multilingual `tiny`.
+- Downloads the model once, verifies its SHA-256, and caches it in local app
+  storage. The iOS model directory is excluded from backups.
+- Does not upload microphone audio to an external STT server.
+- Uses the same Flutter event and Bible-text matching contract on both mobile
+  platforms.
+- Uses Metal and Accelerate on iOS and native Android audio/JNI integration on
+  Android.
 
-Android is intentionally not implemented. Bibleitda continues to use its existing Android `SpeechRecognizer` integration.
+The shared and platform-specific maintenance boundaries are documented in
+[`docs/STT_PLATFORM_MAINTENANCE.md`](docs/STT_PLATFORM_MAINTENANCE.md).
 
 ## FlutterFlow dependency
 
@@ -16,7 +21,9 @@ Android is intentionally not implemented. Bibleitda continues to use its existin
 bibleitda_apple_speech:
   git:
     url: https://github.com/Newercorp/bibleitda-apple-speech.git
-    ref: v0.1.0
+    ref: v0.2.2
 ```
 
-The host app must include `NSMicrophoneUsageDescription` in `Info.plist`. The plugin supports iOS 14 and later. The first start needs network access to download the 147,951,465-byte `ggml-base.bin` model; later starts use the local verified copy.
+The host app must include iOS microphone usage text and Android microphone
+permission. The first STT start needs network access to download the
+77,691,713-byte `ggml-tiny.bin` model. Later starts use the verified local copy.
