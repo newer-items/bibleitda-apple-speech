@@ -78,7 +78,7 @@ final class WhisperEngine: @unchecked Sendable {
         }
         guard let context else {
           let message = wf_last_error().map(String.init(cString:))
-            ?? "Unable to load the Whisper base model."
+            ?? "Unable to load the Whisper tiny model."
           continuation.resume(throwing: EngineError.inference(message))
           return
         }

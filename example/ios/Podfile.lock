@@ -1,5 +1,5 @@
 PODS:
-  - bibleitda_apple_speech (0.0.1):
+  - bibleitda_apple_speech (0.2.0):
     - Flutter
   - Flutter (1.0.0)
   - integration_test (0.0.1):
@@ -19,7 +19,7 @@ EXTERNAL SOURCES:
     :path: ".symlinks/plugins/integration_test/ios"
 
 SPEC CHECKSUMS:
-  bibleitda_apple_speech: 0247e774b03daeec9094921541768db334ec4d89
+  bibleitda_apple_speech: 25398db3766d93877acac76c33be16107710b560
   Flutter: cabc95a1d2626b1b06e7179b784ebcf0c0cde467
   integration_test: 4a889634ef21a45d28d50d622cf412dc6d9f586e
 

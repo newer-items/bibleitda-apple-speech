@@ -48,7 +48,7 @@ final class WhisperSpeechSession: @unchecked Sendable {
   }
 
   func start(localeIdentifier: String) throws {
-    emit(["type": "status", "status": "preparing", "engine": "whisper_cpp_base"])
+    emit(["type": "status", "status": "preparing", "engine": "whisper_cpp_tiny"])
     stateQueue.sync {
       language = Self.whisperLanguage(from: localeIdentifier)
       generation += 1
@@ -63,7 +63,7 @@ final class WhisperSpeechSession: @unchecked Sendable {
     emit([
       "type": "status",
       "status": "listening",
-      "engine": "whisper_cpp_base",
+      "engine": "whisper_cpp_tiny",
     ])
   }
 
@@ -100,7 +100,7 @@ final class WhisperSpeechSession: @unchecked Sendable {
             "text": cleaned,
             "alternatives": [],
             "isFinal": true,
-            "engine": "whisper_cpp_base",
+            "engine": "whisper_cpp_tiny",
           ])
         }
       } catch {
@@ -111,7 +111,7 @@ final class WhisperSpeechSession: @unchecked Sendable {
         ])
       }
     }
-    emit(["type": "status", "status": "done", "engine": "whisper_cpp_base"])
+    emit(["type": "status", "status": "done", "engine": "whisper_cpp_tiny"])
   }
 
   func cancel() async {
@@ -122,7 +122,7 @@ final class WhisperSpeechSession: @unchecked Sendable {
       samples.removeAll(keepingCapacity: false)
       inferencePending = false
     }
-    emit(["type": "status", "status": "done", "engine": "whisper_cpp_base"])
+    emit(["type": "status", "status": "done", "engine": "whisper_cpp_tiny"])
   }
 
   private func startAudioEngine() throws {
@@ -261,7 +261,7 @@ final class WhisperSpeechSession: @unchecked Sendable {
             "text": cleaned,
             "alternatives": [],
             "isFinal": false,
-            "engine": "whisper_cpp_base",
+            "engine": "whisper_cpp_tiny",
           ])
         }
       }

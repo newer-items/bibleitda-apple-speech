@@ -112,4 +112,40 @@ void main() {
     expect(event.receivedBytes, 42);
     expect(event.totalBytes, 100);
   });
+
+  test('Android uses the same tiny model with a platform fallback contract',
+      () {
+    final plugin = File(
+      'android/src/main/kotlin/kr/co/newer/bibleitda_apple_speech/'
+      'BibleitdaAppleSpeechPlugin.kt',
+    ).readAsStringSync();
+    final session = File(
+      'android/src/main/kotlin/kr/co/newer/bibleitda_apple_speech/'
+      'WhisperSpeechSession.kt',
+    ).readAsStringSync();
+    final modelStore = File(
+      'android/src/main/kotlin/kr/co/newer/bibleitda_apple_speech/'
+      'WhisperModelStore.kt',
+    ).readAsStringSync();
+    final cmake = File(
+      'android/src/main/cpp/CMakeLists.txt',
+    ).readAsStringSync();
+
+    expect(plugin, contains('started:whisper_cpp_tiny_android'));
+    expect(plugin, contains('requestPermissions'));
+    expect(session, contains('MediaRecorder.AudioSource.VOICE_RECOGNITION'));
+    expect(session, contains('SAMPLE_RATE = 16_000'));
+    expect(session, contains('MAXIMUM_INFERENCE_SAMPLES = 480_000'));
+    expect(modelStore, contains('ggml-tiny.bin'));
+    expect(modelStore, contains('EXPECTED_SIZE = 77_691_713L'));
+    expect(modelStore, contains('"type" to "download"'));
+    expect(
+      modelStore,
+      contains(
+        'be07e048e1e599ad46341c8d2a135645097a538221678b7acdd1b1919c6e1b21',
+      ),
+    );
+    expect(cmake, contains('add_subdirectory("\${WHISPER_ROOT}"'));
+    expect(cmake, contains('add_library(bibleitda_whisper SHARED'));
+  });
 }

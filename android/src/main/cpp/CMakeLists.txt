@@ -1,0 +1,20 @@
+cmake_minimum_required(VERSION 3.22.1)
+project(bibleitda_whisper LANGUAGES C CXX)
+
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+set(WHISPER_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(WHISPER_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(WHISPER_BUILD_SERVER OFF CACHE BOOL "" FORCE)
+set(WHISPER_ALL_WARNINGS OFF CACHE BOOL "" FORCE)
+set(GGML_ALL_WARNINGS OFF CACHE BOOL "" FORCE)
+set(GGML_OPENMP OFF CACHE BOOL "" FORCE)
+set(GGML_NATIVE OFF CACHE BOOL "" FORCE)
+
+set(WHISPER_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../../../../ios/Vendor/WhisperCppCore")
+add_subdirectory("${WHISPER_ROOT}" "${CMAKE_CURRENT_BINARY_DIR}/whisper" EXCLUDE_FROM_ALL)
+
+add_library(bibleitda_whisper SHARED native_bridge.cpp)
+target_include_directories(bibleitda_whisper PRIVATE "${WHISPER_ROOT}/include")
+target_link_libraries(bibleitda_whisper PRIVATE whisper log android)
