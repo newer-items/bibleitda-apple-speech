@@ -52,7 +52,7 @@ class AppleSpeechAvailability {
     return AppleSpeechAvailability(
       supported: value['supported'] as bool? ?? false,
       systemVersion: value['systemVersion'] as String? ?? '',
-      minimumVersion: value['minimumVersion'] as String? ?? '26.0',
+      minimumVersion: value['minimumVersion'] as String? ?? '14.0',
     );
   }
 

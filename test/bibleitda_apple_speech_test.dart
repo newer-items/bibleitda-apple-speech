@@ -17,7 +17,7 @@ class MockBibleitdaAppleSpeechPlatform
       const AppleSpeechAvailability(
         supported: true,
         systemVersion: '26.0',
-        minimumVersion: '26.0',
+        minimumVersion: '14.0',
       );
 
   @override
@@ -25,7 +25,7 @@ class MockBibleitdaAppleSpeechPlatform
     required String localeIdentifier,
     required List<String> contextualPhrases,
   }) async =>
-      'started:speech_transcriber';
+      'started:whisper_cpp_base';
 
   @override
   Future<void> stop() async {}
@@ -48,31 +48,32 @@ void main() {
 
     final availability = await BibleitdaAppleSpeech.instance.availability();
     expect(availability.supported, isTrue);
-    expect(availability.minimumVersion, '26.0');
+    expect(availability.minimumVersion, '14.0');
   });
 
-  test('iOS uses low-latency speech with a lossless live audio stream', () {
-    final swift = File(
+  test('iOS uses whisper.cpp base with stable model verification', () {
+    final plugin = File(
       'ios/Classes/BibleitdaAppleSpeechPlugin.swift',
     ).readAsStringSync();
+    final session = File(
+      'ios/Classes/WhisperSpeechSession.swift',
+    ).readAsStringSync();
+    final modelStore = File(
+      'ios/Classes/WhisperModelStore.swift',
+    ).readAsStringSync();
 
-    expect(swift, contains('.progressiveTranscription'));
-    expect(swift, contains('.progressiveShortDictation'));
-    expect(swift, isNot(contains('.progressiveLongDictation')));
+    expect(plugin, contains('started:whisper_cpp_base'));
+    expect(plugin, isNot(contains('SFSpeechRecognizer')));
+    expect(session, contains('sampleRate = 16_000.0'));
+    expect(session, contains('bufferSize: 2_048'));
+    expect(session, contains('isFinal": true'));
+    expect(modelStore, contains('ggml-base.bin'));
+    expect(modelStore, contains('147_951_465'));
     expect(
-      swift.indexOf('SpeechTranscriber.supportedLocale'),
-      lessThan(swift.indexOf('DictationTranscriber.supportedLocale')),
+      modelStore,
+      contains(
+        '60ed5bc3dd14eea856493d334349b405782ddcaf0028d4b5df4088345fba2efe',
+      ),
     );
-    expect(swift, contains('AsyncStream<AnalyzerInput>.makeStream()'));
-    expect(swift, isNot(contains('.bufferingNewest(24)')));
-    expect(swift, contains('resultStreamDidEnd(engine: engine.name)'));
-    expect(swift, contains('"reason": "result_stream_ended"'));
-    expect(swift, contains('bufferSize: 2048'));
-    expect(
-      swift,
-      contains('resultsFinalizationTime: result.resultsFinalizationTime'),
-    );
-    expect(swift, contains('replaceTranscriptSegment('));
-    expect(swift, contains('.map(\\.text)'));
   });
 }

@@ -1,11 +1,12 @@
 import AVFoundation
 import Flutter
-import Speech
 import UIKit
 
 public final class BibleitdaAppleSpeechPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
   private var eventSink: FlutterEventSink?
-  private var activeSession: AnyObject?
+  private var activeSession: WhisperSpeechSession?
+  private var whisperEngine: WhisperEngine?
+  private var engineLoadTask: Task<WhisperEngine, Error>?
 
   public static func register(with registrar: FlutterPluginRegistrar) {
     let instance = BibleitdaAppleSpeechPlugin()
@@ -26,44 +27,35 @@ public final class BibleitdaAppleSpeechPlugin: NSObject, FlutterPlugin, FlutterS
     case "availability":
       result([
         "supported": ProcessInfo.processInfo.isOperatingSystemAtLeast(
-          OperatingSystemVersion(majorVersion: 26, minorVersion: 0, patchVersion: 0)
+          OperatingSystemVersion(majorVersion: 14, minorVersion: 0, patchVersion: 0)
         ),
         "systemVersion": UIDevice.current.systemVersion,
-        "minimumVersion": "26.0",
+        "minimumVersion": "14.0",
       ])
     case "start":
-      guard #available(iOS 26.0, *) else {
-        result("unsupported")
-        return
-      }
       let arguments = call.arguments as? [String: Any]
       let localeIdentifier = arguments?["localeIdentifier"] as? String ?? "ko_KR"
-      let contextualPhrases = arguments?["contextualPhrases"] as? [String] ?? []
       Task { @MainActor [weak self] in
         guard let self else {
           result("listen_error")
           return
         }
-        guard await Self.requestPermissions() else {
+        guard await Self.requestMicrophonePermission() else {
           result("permission_denied")
           return
         }
-        if let current = self.activeSession as? AppleSpeechSession {
-          await current.cancel()
-        }
-        let session = AppleSpeechSession { [weak self] event in
-          self?.emit(event)
-        }
-        self.activeSession = session
+
+        await self.activeSession?.cancel()
+        self.activeSession = nil
+
         do {
-          let engine = try await session.start(
-            localeIdentifier: localeIdentifier,
-            contextualPhrases: contextualPhrases
-          )
-          result("started:\(engine)")
-        } catch AppleSpeechSession.SessionError.unsupportedLocale {
-          self.activeSession = nil
-          result("unsupported")
+          let engine = try await self.loadEngine()
+          let session = WhisperSpeechSession(engine: engine) { [weak self] event in
+            self?.emit(event)
+          }
+          self.activeSession = session
+          try session.start(localeIdentifier: localeIdentifier)
+          result("started:whisper_cpp_base")
         } catch {
           self.activeSession = nil
           self.emit([
@@ -75,23 +67,23 @@ public final class BibleitdaAppleSpeechPlugin: NSObject, FlutterPlugin, FlutterS
         }
       }
     case "stop":
-      guard #available(iOS 26.0, *), let session = activeSession as? AppleSpeechSession else {
-        result(nil)
-        return
-      }
       Task { @MainActor [weak self] in
+        guard let self, let session = self.activeSession else {
+          result(nil)
+          return
+        }
         await session.stop()
-        self?.activeSession = nil
+        self.activeSession = nil
         result(nil)
       }
     case "cancel":
-      guard #available(iOS 26.0, *), let session = activeSession as? AppleSpeechSession else {
-        result(nil)
-        return
-      }
       Task { @MainActor [weak self] in
+        guard let self, let session = self.activeSession else {
+          result(nil)
+          return
+        }
         await session.cancel()
-        self?.activeSession = nil
+        self.activeSession = nil
         result(nil)
       }
     default:
@@ -112,6 +104,37 @@ public final class BibleitdaAppleSpeechPlugin: NSObject, FlutterPlugin, FlutterS
     return nil
   }
 
+  private func loadEngine() async throws -> WhisperEngine {
+    if let whisperEngine {
+      return whisperEngine
+    }
+    if let engineLoadTask {
+      return try await engineLoadTask.value
+    }
+
+    emit(["type": "status", "status": "preparing_model", "engine": "whisper_cpp_base"])
+    let task = Task<WhisperEngine, Error> { [weak self] in
+      let modelURL = try await WhisperModelStore.baseModelURL { message in
+        self?.emit(["type": "diagnostic", "message": message])
+      }
+      return try await WhisperEngine.load(modelURL: modelURL)
+    }
+    engineLoadTask = task
+    do {
+      let engine = try await task.value
+      whisperEngine = engine
+      engineLoadTask = nil
+      emit([
+        "type": "diagnostic",
+        "message": "whisper_model_ready:base:147951465",
+      ])
+      return engine
+    } catch {
+      engineLoadTask = nil
+      throw error
+    }
+  }
+
   private func emit(_ event: [String: Any]) {
     DispatchQueue.main.async { [weak self] in
       self?.eventSink?(event)
@@ -119,22 +142,7 @@ public final class BibleitdaAppleSpeechPlugin: NSObject, FlutterPlugin, FlutterS
   }
 
   @MainActor
-  private static func requestPermissions() async -> Bool {
-    let speechAllowed: Bool
-    switch SFSpeechRecognizer.authorizationStatus() {
-    case .authorized:
-      speechAllowed = true
-    case .notDetermined:
-      speechAllowed = await withCheckedContinuation { continuation in
-        SFSpeechRecognizer.requestAuthorization { status in
-          continuation.resume(returning: status == .authorized)
-        }
-      }
-    default:
-      speechAllowed = false
-    }
-    guard speechAllowed else { return false }
-
+  private static func requestMicrophonePermission() async -> Bool {
     let audioSession = AVAudioSession.sharedInstance()
     switch audioSession.recordPermission {
     case .granted:
@@ -148,423 +156,5 @@ public final class BibleitdaAppleSpeechPlugin: NSObject, FlutterPlugin, FlutterS
     default:
       return false
     }
-  }
-}
-
-@available(iOS 26.0, *)
-@MainActor
-private final class AppleSpeechSession {
-  enum SessionError: Error {
-    case unsupportedLocale
-    case noAudioFormat
-    case noAudioInput
-    case converterUnavailable
-  }
-
-  private struct TranscriptSegment {
-    let range: CMTimeRange
-    let text: String
-    var isFinal: Bool
-  }
-
-  private enum Engine {
-    case speech(SpeechTranscriber)
-    case dictation(DictationTranscriber)
-
-    var name: String {
-      switch self {
-      case .speech:
-        return "speech_transcriber"
-      case .dictation:
-        return "dictation_transcriber"
-      }
-    }
-
-    var modules: [any SpeechModule] {
-      switch self {
-      case .speech(let transcriber):
-        return [transcriber]
-      case .dictation(let transcriber):
-        return [transcriber]
-      }
-    }
-  }
-
-  private let emit: ([String: Any]) -> Void
-  private var engine: Engine?
-  private var analyzer: SpeechAnalyzer?
-  private var audioEngine: AVAudioEngine?
-  private var inputContinuation: AsyncStream<AnalyzerInput>.Continuation?
-  private var resultTask: Task<Void, Never>?
-  private var isActive = false
-  private var transcriptSegments: [TranscriptSegment] = []
-  private var rememberedCategory: AVAudioSession.Category?
-  private var rememberedMode: AVAudioSession.Mode?
-  private var rememberedOptions: AVAudioSession.CategoryOptions?
-
-  init(emit: @escaping ([String: Any]) -> Void) {
-    self.emit = emit
-  }
-
-  func start(localeIdentifier: String, contextualPhrases: [String]) async throws -> String {
-    emit(["type": "status", "status": "preparing"])
-
-    let requestedLocale = Locale(identifier: localeIdentifier)
-    let selectedEngine: Engine
-    // SpeechTranscriber is Apple's low-latency live model. DictationTranscriber
-    // remains the compatibility fallback for unsupported locales or devices.
-    if let locale = await SpeechTranscriber.supportedLocale(
-      equivalentTo: requestedLocale
-    ) {
-      selectedEngine = .speech(
-        SpeechTranscriber(locale: locale, preset: .progressiveTranscription)
-      )
-    } else if let locale = await DictationTranscriber.supportedLocale(
-      equivalentTo: requestedLocale
-    ) {
-      selectedEngine = .dictation(
-        DictationTranscriber(locale: locale, preset: .progressiveShortDictation)
-      )
-    } else {
-      throw SessionError.unsupportedLocale
-    }
-    engine = selectedEngine
-
-    if let installation = try await AssetInventory.assetInstallationRequest(
-      supporting: selectedEngine.modules
-    ) {
-      emit(["type": "status", "status": "preparing_model"])
-      try await installation.downloadAndInstall()
-    }
-
-    let context = AnalysisContext()
-    context.contextualStrings[.general] = Self.normalizedContext(contextualPhrases)
-    let analyzerOptions = SpeechAnalyzer.Options(
-      priority: .userInitiated,
-      modelRetention: .processLifetime
-    )
-    let newAnalyzer = SpeechAnalyzer(
-      modules: selectedEngine.modules,
-      options: analyzerOptions
-    )
-    try await newAnalyzer.setContext(context)
-
-    guard let analyzerFormat = await SpeechAnalyzer.bestAvailableAudioFormat(
-      compatibleWith: selectedEngine.modules
-    ) else {
-      throw SessionError.noAudioFormat
-    }
-    try await newAnalyzer.prepareToAnalyze(in: analyzerFormat)
-
-    // Keep every microphone buffer. The previous one-second newest-only queue
-    // could drop the beginning of a phrase while the on-device model caught up.
-    let inputPair = AsyncStream<AnalyzerInput>.makeStream()
-
-    transcriptSegments.removeAll(keepingCapacity: true)
-    inputContinuation = inputPair.continuation
-    analyzer = newAnalyzer
-    startResultTask(for: selectedEngine)
-    try await newAnalyzer.start(inputSequence: inputPair.stream)
-    try startAudioEngine(
-      analyzerFormat: analyzerFormat,
-      continuation: inputPair.continuation
-    )
-
-    isActive = true
-    emit([
-      "type": "status",
-      "status": "listening",
-      "engine": selectedEngine.name,
-    ])
-    return selectedEngine.name
-  }
-
-  func stop() async {
-    guard isActive || analyzer != nil else { return }
-    isActive = false
-    stopAudioInput()
-    inputContinuation?.finish()
-    inputContinuation = nil
-    do {
-      try await analyzer?.finalizeAndFinishThroughEndOfInput()
-      await resultTask?.value
-    } catch {
-      emit([
-        "type": "error",
-        "code": "finalize_error",
-        "message": error.localizedDescription,
-      ])
-    }
-    clearSession()
-    emit(["type": "status", "status": "done"])
-  }
-
-  func cancel() async {
-    isActive = false
-    stopAudioInput()
-    inputContinuation?.finish()
-    inputContinuation = nil
-    resultTask?.cancel()
-    resultTask = nil
-    await analyzer?.cancelAndFinishNow()
-    clearSession()
-    emit(["type": "status", "status": "done"])
-  }
-
-  private func startResultTask(for engine: Engine) {
-    switch engine {
-    case .speech(let transcriber):
-      resultTask = Task { [weak self] in
-        do {
-          for try await result in transcriber.results {
-            guard !Task.isCancelled else { return }
-            self?.publish(
-              text: result.text,
-              isFinal: result.isFinal,
-              range: result.range,
-              resultsFinalizationTime: result.resultsFinalizationTime,
-              engine: engine.name
-            )
-          }
-          guard !Task.isCancelled else { return }
-          self?.resultStreamDidEnd(engine: engine.name)
-        } catch is CancellationError {
-          return
-        } catch {
-          self?.publishError(error)
-        }
-      }
-    case .dictation(let transcriber):
-      resultTask = Task { [weak self] in
-        do {
-          for try await result in transcriber.results {
-            guard !Task.isCancelled else { return }
-            self?.publish(
-              text: result.text,
-              isFinal: result.isFinal,
-              range: result.range,
-              resultsFinalizationTime: result.resultsFinalizationTime,
-              engine: engine.name
-            )
-          }
-          guard !Task.isCancelled else { return }
-          self?.resultStreamDidEnd(engine: engine.name)
-        } catch is CancellationError {
-          return
-        } catch {
-          self?.publishError(error)
-        }
-      }
-    }
-  }
-
-  private func publish(
-    text: AttributedString,
-    isFinal: Bool,
-    range: CMTimeRange,
-    resultsFinalizationTime: CMTime,
-    engine: String
-  ) {
-    let mainText = String(text.characters).trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !mainText.isEmpty else { return }
-    replaceTranscriptSegment(
-      range: range,
-      text: mainText,
-      isFinal: isFinal,
-      resultsFinalizationTime: resultsFinalizationTime
-    )
-    let cumulativeText = transcriptSegments
-      .map(\.text)
-      .joined(separator: " ")
-      .trimmingCharacters(in: .whitespacesAndNewlines)
-    let cumulativeIsFinal = transcriptSegments.allSatisfy(\.isFinal)
-    emit([
-      "type": "result",
-      "text": cumulativeText,
-      "alternatives": [],
-      "isFinal": cumulativeIsFinal,
-      "engine": engine,
-    ])
-  }
-
-  private func replaceTranscriptSegment(
-    range: CMTimeRange,
-    text: String,
-    isFinal: Bool,
-    resultsFinalizationTime: CMTime
-  ) {
-    transcriptSegments.removeAll { Self.rangesOverlap($0.range, range) }
-    transcriptSegments.append(
-      TranscriptSegment(range: range, text: text, isFinal: isFinal)
-    )
-    transcriptSegments.sort {
-      CMTimeCompare($0.range.start, $1.range.start) < 0
-    }
-    for index in transcriptSegments.indices {
-      let segmentEnd = CMTimeRangeGetEnd(transcriptSegments[index].range)
-      if CMTimeCompare(segmentEnd, resultsFinalizationTime) <= 0 {
-        transcriptSegments[index].isFinal = true
-      }
-    }
-  }
-
-  nonisolated private static func rangesOverlap(
-    _ left: CMTimeRange,
-    _ right: CMTimeRange
-  ) -> Bool {
-    CMTimeCompare(left.start, CMTimeRangeGetEnd(right)) < 0 &&
-      CMTimeCompare(right.start, CMTimeRangeGetEnd(left)) < 0
-  }
-
-  private func publishError(_ error: Error) {
-    emit([
-      "type": "error",
-      "code": "recognition_error",
-      "message": error.localizedDescription,
-    ])
-  }
-
-  private func resultStreamDidEnd(engine: String) {
-    guard isActive else { return }
-    isActive = false
-    emit([
-      "type": "status",
-      "status": "done",
-      "engine": engine,
-      "reason": "result_stream_ended",
-    ])
-  }
-
-  private func startAudioEngine(
-    analyzerFormat: AVAudioFormat,
-    continuation: AsyncStream<AnalyzerInput>.Continuation
-  ) throws {
-    let session = AVAudioSession.sharedInstance()
-    rememberedCategory = session.category
-    rememberedMode = session.mode
-    rememberedOptions = session.categoryOptions
-
-    try session.setCategory(.record, mode: .measurement, options: [])
-    if let builtInMic = session.availableInputs?.first(where: {
-      $0.portType == .builtInMic
-    }) {
-      try session.setPreferredInput(builtInMic)
-    }
-    try session.setActive(true, options: .notifyOthersOnDeactivation)
-
-    let engine = AVAudioEngine()
-    let inputNode = engine.inputNode
-    let inputFormat = inputNode.outputFormat(forBus: 0)
-    guard inputFormat.channelCount > 0 else {
-      throw SessionError.noAudioInput
-    }
-    guard let converter = AVAudioConverter(
-      from: inputFormat,
-      to: analyzerFormat
-    ) else {
-      throw SessionError.converterUnavailable
-    }
-
-    inputNode.installTap(
-      onBus: 0,
-      bufferSize: 2048,
-      format: inputFormat
-    ) { buffer, _ in
-      guard let converted = Self.convert(
-        buffer: buffer,
-        using: converter,
-        outputFormat: analyzerFormat
-      ) else {
-        return
-      }
-      continuation.yield(AnalyzerInput(buffer: converted))
-    }
-    engine.prepare()
-    try engine.start()
-    audioEngine = engine
-
-    let route = session.currentRoute.inputs.first
-    emit([
-      "type": "diagnostic",
-      "message": "audio_engine:\(route?.portType.rawValue ?? "none"):\(route?.portName ?? "none"):\(session.sampleRate)",
-    ])
-  }
-
-  private func stopAudioInput() {
-    if let engine = audioEngine {
-      engine.inputNode.removeTap(onBus: 0)
-      engine.stop()
-      audioEngine = nil
-    }
-    let session = AVAudioSession.sharedInstance()
-    do {
-      if let category = rememberedCategory,
-         let mode = rememberedMode,
-         let options = rememberedOptions {
-        try session.setCategory(category, mode: mode, options: options)
-      }
-      try session.setActive(false, options: .notifyOthersOnDeactivation)
-    } catch {
-      emit([
-        "type": "diagnostic",
-        "message": "audio_session_restore_failed: \(error.localizedDescription)",
-      ])
-    }
-  }
-
-  private func clearSession() {
-    resultTask?.cancel()
-    resultTask = nil
-    analyzer = nil
-    engine = nil
-    transcriptSegments.removeAll(keepingCapacity: true)
-  }
-
-  nonisolated private static func convert(
-    buffer: AVAudioPCMBuffer,
-    using converter: AVAudioConverter,
-    outputFormat: AVAudioFormat
-  ) -> AVAudioPCMBuffer? {
-    if buffer.format == outputFormat {
-      return buffer
-    }
-    let ratio = outputFormat.sampleRate / buffer.format.sampleRate
-    let capacity = AVAudioFrameCount(ceil(Double(buffer.frameLength) * ratio)) + 32
-    guard let output = AVAudioPCMBuffer(
-      pcmFormat: outputFormat,
-      frameCapacity: capacity
-    ) else {
-      return nil
-    }
-
-    var suppliedInput = false
-    var conversionError: NSError?
-    let status = converter.convert(to: output, error: &conversionError) { _, inputStatus in
-      if suppliedInput {
-        inputStatus.pointee = .noDataNow
-        return nil
-      }
-      suppliedInput = true
-      inputStatus.pointee = .haveData
-      return buffer
-    }
-    guard conversionError == nil,
-          status == .haveData || status == .inputRanDry else {
-      return nil
-    }
-    return output.frameLength > 0 ? output : nil
-  }
-
-  nonisolated private static func normalizedContext(_ phrases: [String]) -> [String] {
-    var seen = Set<String>()
-    var result: [String] = []
-    for phrase in phrases {
-      let value = phrase.trimmingCharacters(in: .whitespacesAndNewlines)
-      guard value.count >= 2, !seen.contains(value) else { continue }
-      seen.insert(value)
-      result.append(value)
-      if result.count == 100 { break }
-    }
-    return result
   }
 }
