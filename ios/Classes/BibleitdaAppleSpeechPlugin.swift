@@ -9,6 +9,7 @@ public final class BibleitdaAppleSpeechPlugin: NSObject, FlutterPlugin, FlutterS
   private var engineLoadTask: Task<WhisperEngine, Error>?
 
   public static func register(with registrar: FlutterPluginRegistrar) {
+    WhisperModelStore.removeLegacyModelsAtStartup()
     let instance = BibleitdaAppleSpeechPlugin()
     let methodChannel = FlutterMethodChannel(
       name: "bibleitda_apple_speech/methods",

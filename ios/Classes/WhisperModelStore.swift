@@ -10,6 +10,22 @@ enum WhisperModelStore {
   )!
   private static let legacyModelNames = ["ggml-base.bin"]
 
+  static func removeLegacyModelsAtStartup() {
+    let fileManager = FileManager.default
+    guard let applicationSupport = try? fileManager.url(
+      for: .applicationSupportDirectory,
+      in: .userDomainMask,
+      appropriateFor: nil,
+      create: true
+    ) else {
+      return
+    }
+    let directory = applicationSupport
+      .appendingPathComponent("BibleitdaSpeech", isDirectory: true)
+      .appendingPathComponent("Models", isDirectory: true)
+    removeLegacyModels(in: directory) { _ in }
+  }
+
   static func lightModelURL(
     diagnostic: @escaping (String) -> Void,
     progress: @escaping (Int64, Int64) -> Void
@@ -144,6 +160,7 @@ enum WhisperModelStore {
 
 private final class ModelDownloader: NSObject, URLSessionDownloadDelegate {
   private let progress: (Int64, Int64) -> Void
+  private var lastReportedPercent = -1
   private var continuation: CheckedContinuation<URL, Error>?
   private var retainedURL: URL?
   private var responseError: Error?
@@ -188,6 +205,13 @@ private final class ModelDownloader: NSObject, URLSessionDownloadDelegate {
     let total = totalBytesExpectedToWrite > 0
       ? totalBytesExpectedToWrite
       : downloadTask.response?.expectedContentLength ?? 0
+    let percent = total > 0
+      ? Int((Double(totalBytesWritten) / Double(total) * 100).rounded(.down))
+      : 0
+    guard percent != lastReportedPercent else {
+      return
+    }
+    lastReportedPercent = percent
     progress(totalBytesWritten, total)
   }
 

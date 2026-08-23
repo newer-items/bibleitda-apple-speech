@@ -73,6 +73,7 @@ void main() {
 
     expect(plugin, contains('started:whisper_cpp_tiny'));
     expect(plugin, contains('"type": "download"'));
+    expect(plugin, contains('removeLegacyModelsAtStartup()'));
     expect(plugin, isNot(contains('SFSpeechRecognizer')));
     expect(session, contains('sampleRate = 16_000.0'));
     expect(session, contains('bufferSize: 2_048'));
@@ -87,6 +88,7 @@ void main() {
     expect(modelStore, contains('77_691_713'));
     expect(modelStore, contains('legacyModelNames = ["ggml-base.bin"]'));
     expect(modelStore, contains('URLSessionDownloadDelegate'));
+    expect(modelStore, contains('lastReportedPercent'));
     expect(
       modelStore,
       contains(
