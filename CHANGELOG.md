@@ -1,3 +1,9 @@
+## 0.2.3
+
+* English only: pass the passage's distinct words (alphabetical, up to 60) to
+  Whisper as `initial_prompt` on iOS and Android, using the `contextualPhrases`
+  the app already sends. Korean recognition is unchanged (no prompt).
+
 ## 0.1.1
 
 * Bundle the Metal shader used by whisper.cpp on iOS.

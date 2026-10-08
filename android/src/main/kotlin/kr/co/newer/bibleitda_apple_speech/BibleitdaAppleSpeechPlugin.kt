@@ -62,7 +62,8 @@ class BibleitdaAppleSpeechPlugin :
             )
             "start" -> {
                 val locale = call.argument<String>("localeIdentifier") ?: "ko_KR"
-                startWithPermission(locale, result)
+                val phrases = call.argument<List<String>>("contextualPhrases") ?: emptyList()
+                startWithPermission(locale, phrases, result)
             }
             "stop" -> {
                 val session = activeSession
@@ -80,9 +81,9 @@ class BibleitdaAppleSpeechPlugin :
         }
     }
 
-    private fun startWithPermission(locale: String, result: MethodChannel.Result) {
+    private fun startWithPermission(locale: String, phrases: List<String>, result: MethodChannel.Result) {
         if (applicationContext.checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
-            prepareAndStart(locale, result)
+            prepareAndStart(locale, phrases, result)
             return
         }
         val activity = activityBinding?.activity
@@ -91,11 +92,11 @@ class BibleitdaAppleSpeechPlugin :
             return
         }
         pendingStart?.result?.success("listen_error")
-        pendingStart = PendingStart(locale, result)
+        pendingStart = PendingStart(locale, phrases, result)
         activity.requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), PERMISSION_REQUEST)
     }
 
-    private fun prepareAndStart(locale: String, result: MethodChannel.Result) {
+    private fun prepareAndStart(locale: String, phrases: List<String>, result: MethodChannel.Result) {
         activeSession?.cancel {}
         activeSession = null
         emit(mapOf("type" to "status", "status" to "preparing_model", "engine" to "whisper_cpp_tiny_android"))
@@ -109,7 +110,7 @@ class BibleitdaAppleSpeechPlugin :
                 }
                 mainHandler.post {
                     try {
-                        val session = WhisperSpeechSession(nativeContext, locale, ::emit)
+                        val session = WhisperSpeechSession(nativeContext, locale, phrases, ::emit)
                         activeSession = session
                         session.start()
                         result.success("started:whisper_cpp_tiny_android")
@@ -135,7 +136,7 @@ class BibleitdaAppleSpeechPlugin :
         val pending = pendingStart ?: return true
         pendingStart = null
         if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) {
-            prepareAndStart(pending.locale, pending.result)
+            prepareAndStart(pending.locale, pending.phrases, pending.result)
         } else {
             pending.result.success("permission_denied")
         }
@@ -188,6 +189,7 @@ class BibleitdaAppleSpeechPlugin :
 
     private data class PendingStart(
         val locale: String,
+        val phrases: List<String>,
         val result: MethodChannel.Result,
     )
 

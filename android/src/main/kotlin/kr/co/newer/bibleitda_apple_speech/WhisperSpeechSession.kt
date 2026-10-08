@@ -12,9 +12,11 @@ import kotlin.math.sqrt
 internal class WhisperSpeechSession(
     private val context: Long,
     localeIdentifier: String,
+    contextualPhrases: List<String>,
     private val emit: (Map<String, Any>) -> Unit,
 ) {
     private val language = localeIdentifier.replace('-', '_').substringBefore('_').lowercase().ifBlank { "ko" }
+    private val prompt = vocabularyPrompt(language, contextualPhrases)
     private val running = AtomicBoolean(false)
     private val inferenceRunning = AtomicBoolean(false)
     private val inferencePending = AtomicBoolean(false)
@@ -102,7 +104,7 @@ internal class WhisperSpeechSession(
 
     private fun emitTranscript(snapshot: FloatArray, isFinal: Boolean) {
         val started = System.nanoTime()
-        val text = clean(WhisperNative.transcribe(context, snapshot, language))
+        val text = clean(WhisperNative.transcribe(context, snapshot, language, prompt))
         val elapsedMs = (System.nanoTime() - started) / 1_000_000
         emit(
             mapOf(
@@ -197,6 +199,23 @@ internal class WhisperSpeechSession(
     }
 
     private companion object {
+        /**
+         * English only (Korean is unchanged): the passage's distinct words, in
+         * alphabetical order, as Whisper's initial prompt. A word list improves
+         * archaic KJV words and names without handing Whisper the sentence itself.
+         */
+        internal fun vocabularyPrompt(language: String, phrases: List<String>): String {
+            if (language != "en") return ""
+            val seen = HashSet<String>()
+            val words = ArrayList<String>()
+            for (phrase in phrases) {
+                for (raw in phrase.split(Regex("\\s+"))) {
+                    val word = raw.filter { it.isLetter() || it == '\'' }
+                    if (word.length >= 3 && seen.add(word.lowercase())) words.add(word)
+                }
+            }
+            return words.sortedBy { it.lowercase() }.take(60).joinToString(", ")
+        }
         const val SAMPLE_RATE = 16_000
         const val MINIMUM_INFERENCE_SAMPLES = 16_000
         const val MAXIMUM_INFERENCE_SAMPLES = 480_000

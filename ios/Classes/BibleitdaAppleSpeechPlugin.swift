@@ -37,6 +37,7 @@ public final class BibleitdaAppleSpeechPlugin: NSObject, FlutterPlugin, FlutterS
     case "start":
       let arguments = call.arguments as? [String: Any]
       let localeIdentifier = arguments?["localeIdentifier"] as? String ?? "ko_KR"
+      let contextualPhrases = arguments?["contextualPhrases"] as? [String] ?? []
       Task { @MainActor [weak self] in
         guard let self else {
           result("listen_error")
@@ -56,7 +57,7 @@ public final class BibleitdaAppleSpeechPlugin: NSObject, FlutterPlugin, FlutterS
             self?.emit(event)
           }
           self.activeSession = session
-          try session.start(localeIdentifier: localeIdentifier)
+          try session.start(localeIdentifier: localeIdentifier, contextualPhrases: contextualPhrases)
           result("started:whisper_cpp_tiny")
         } catch {
           self.activeSession = nil

@@ -32,7 +32,7 @@ Java_kr_co_newer_bibleitda_1apple_1speech_WhisperNative_freeContext(
 
 extern "C" JNIEXPORT jstring JNICALL
 Java_kr_co_newer_bibleitda_1apple_1speech_WhisperNative_transcribe(
-    JNIEnv *env, jobject, jlong pointer, jfloatArray audio, jstring language) {
+    JNIEnv *env, jobject, jlong pointer, jfloatArray audio, jstring language, jstring prompt) {
     auto *context = reinterpret_cast<whisper_context *>(pointer);
     if (context == nullptr || audio == nullptr) return env->NewStringUTF("");
 
@@ -42,6 +42,7 @@ Java_kr_co_newer_bibleitda_1apple_1speech_WhisperNative_transcribe(
     if (samples == nullptr) return env->NewStringUTF("");
 
     const std::string language_code = to_string(env, language);
+    const std::string prompt_text = prompt == nullptr ? std::string() : to_string(env, prompt);
     whisper_full_params params = whisper_full_default_params(WHISPER_SAMPLING_GREEDY);
     params.n_threads = std::min(4, std::max(1, static_cast<int>(std::thread::hardware_concurrency())));
     params.translate = false;
@@ -57,6 +58,8 @@ Java_kr_co_newer_bibleitda_1apple_1speech_WhisperNative_transcribe(
     params.temperature = 0.0f;
     params.temperature_inc = 0.0f;
     params.no_speech_thold = 0.30f;
+    // English only: vocabulary prompt from the passage (empty for Korean).
+    params.initial_prompt = prompt_text.empty() ? nullptr : prompt_text.c_str();
     params.print_progress = false;
     params.print_realtime = false;
     params.print_timestamps = false;

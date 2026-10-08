@@ -7,5 +7,5 @@ internal object WhisperNative {
 
     external fun createContext(modelPath: String): Long
     external fun freeContext(context: Long)
-    external fun transcribe(context: Long, samples: FloatArray, language: String): String
+    external fun transcribe(context: Long, samples: FloatArray, language: String, prompt: String): String
 }

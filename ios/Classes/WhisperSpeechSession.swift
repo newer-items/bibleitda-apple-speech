@@ -40,6 +40,7 @@ final class WhisperSpeechSession: @unchecked Sendable {
   private var rememberedMode: AVAudioSession.Mode?
   private var rememberedOptions: AVAudioSession.CategoryOptions?
   private var language = "ko"
+  private var prompt = ""
   private var generation = 0
   private var active = false
   private var samples: [Float] = []
@@ -53,10 +54,11 @@ final class WhisperSpeechSession: @unchecked Sendable {
     self.emit = emit
   }
 
-  func start(localeIdentifier: String) throws {
+  func start(localeIdentifier: String, contextualPhrases: [String] = []) throws {
     emit(["type": "status", "status": "preparing", "engine": "whisper_cpp_tiny"])
     stateQueue.sync {
       language = Self.whisperLanguage(from: localeIdentifier)
+      prompt = Self.vocabularyPrompt(language: language, phrases: contextualPhrases)
       generation += 1
       active = true
       samples.removeAll(keepingCapacity: true)
@@ -83,11 +85,13 @@ final class WhisperSpeechSession: @unchecked Sendable {
     }
     let finalGeneration = finalState.0
     let finalSamples = finalState.1
+    let finalPrompt = stateQueue.sync { prompt }
     if Self.containsSpeech(finalSamples) {
       do {
         let transcription = try await engine.transcribe(
           samples: Array(finalSamples.suffix(Self.maximumInferenceSamples)),
-          language: finalState.2
+          language: finalState.2,
+          prompt: finalPrompt
         )
         guard finalGeneration == stateQueue.sync(execute: { generation }) else { return }
         emit([
@@ -205,6 +209,7 @@ final class WhisperSpeechSession: @unchecked Sendable {
     guard Self.hasRecentSpeech(snapshot) else { return }
     let inferenceGeneration = generation
     let inferenceLanguage = language
+    let inferencePrompt = prompt
     inferenceInFlight = true
     inferencePending = false
     lastInferenceAt = Date()
@@ -214,7 +219,8 @@ final class WhisperSpeechSession: @unchecked Sendable {
       do {
         let transcription = try await self.engine.transcribe(
           samples: snapshot,
-          language: inferenceLanguage
+          language: inferenceLanguage,
+          prompt: inferencePrompt
         )
         self.finishInference(
           transcription: transcription,
@@ -364,6 +370,24 @@ final class WhisperSpeechSession: @unchecked Sendable {
       .replacingOccurrences(of: "[MUSIC]", with: "")
       .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
       .trimmingCharacters(in: .whitespacesAndNewlines)
+  }
+
+  /// English only (Korean is unchanged): the passage's distinct words, in
+  /// alphabetical order, as Whisper's initial prompt. A word list improves
+  /// archaic KJV words and names without handing Whisper the sentence itself.
+  nonisolated static func vocabularyPrompt(language: String, phrases: [String]) -> String {
+    guard language == "en" else { return "" }
+    var seen = Set<String>()
+    var words: [String] = []
+    for phrase in phrases {
+      for raw in phrase.split(whereSeparator: { $0.isWhitespace }) {
+        let word = raw.filter { $0.isLetter || $0 == "'" }
+        guard word.count >= 3, seen.insert(word.lowercased()).inserted else { continue }
+        words.append(word)
+      }
+    }
+    words.sort { $0.lowercased() < $1.lowercased() }
+    return words.prefix(60).joined(separator: ", ")
   }
 
   private nonisolated static func whisperLanguage(from localeIdentifier: String) -> String {

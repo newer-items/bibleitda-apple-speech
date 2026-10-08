@@ -87,7 +87,7 @@ final class WhisperEngine: @unchecked Sendable {
     }
   }
 
-  func transcribe(samples: [Float], language: String) async throws -> WhisperTranscription {
+  func transcribe(samples: [Float], language: String, prompt: String = "") async throws -> WhisperTranscription {
     guard !samples.isEmpty else {
       return WhisperTranscription(text: "", processingMilliseconds: 0)
     }
@@ -113,6 +113,9 @@ final class WhisperEngine: @unchecked Sendable {
         Self.set(job, double: "temperature_inc", value: 0)
         Self.set(job, double: "no_speech_thold", value: 0.30)
         Self.set(job, string: "language", value: language)
+        if !prompt.isEmpty {
+          Self.set(job, string: "initial_prompt", value: prompt)
+        }
 
         let jsonPointer = samples.withUnsafeBufferPointer { buffer in
           wf_run(self.context, job, buffer.baseAddress, Int32(buffer.count))
